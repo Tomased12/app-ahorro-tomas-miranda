@@ -12,7 +12,7 @@ import {
   orderBy,
   serverTimestamp,
 } from 'firebase/firestore';
-import { db, isFirebaseConfigured } from '@/lib/firebase';
+import { db, isFirebaseConfigured, sanitizeData } from '@/lib/firebase';
 import {
   Transaction,
   Category,
@@ -53,6 +53,9 @@ import {
   Target,
   CalendarDays,
   PiggyBank,
+  Sparkles,
+  AlertTriangle,
+  CheckCircle2,
 } from 'lucide-react';
 
 type ActiveTab = 'resumen' | 'presupuestos' | 'vencimientos' | 'chanchitos';
@@ -190,12 +193,21 @@ export default function Home() {
   const [categoryFilter, setCategoryFilter] = useState('Todas');
   const [statusFilter, setStatusFilter] = useState('todos');
 
+  // Notificaciones y errores
+  const [firestoreError, setFirestoreError] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
   // Modales
   const [isTxModalOpen, setIsTxModalOpen] = useState(false);
   const [editingTx, setEditingTx] = useState<Transaction | null>(null);
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
 
   const isLiveFirebase = isFirebaseConfigured() && db !== null;
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3500);
+  };
 
   // 1. Sincronización de Transacciones
   useEffect(() => {
@@ -204,6 +216,7 @@ export default function Home() {
       const unsubscribe = onSnapshot(
         q,
         (snapshot) => {
+          setFirestoreError(null);
           const list: Transaction[] = [];
           snapshot.forEach((docSnap) => {
             list.push({
@@ -213,7 +226,21 @@ export default function Home() {
           });
           setTransactions(list);
         },
-        (error) => console.error('Error transactions:', error)
+        (error) => {
+          console.error('Error Firestore transactions:', error);
+          if (error.code === 'permission-denied') {
+            setFirestoreError(
+              '⚠️ Permiso denegado en Firestore: Asegúrate de publicar las reglas en Firebase Console > Firestore Database > Reglas.'
+            );
+          }
+          // Cargar de local si Firestore falla
+          try {
+            const local = localStorage.getItem('local_transactions');
+            if (local) setTransactions(JSON.parse(local));
+          } catch (e) {
+            console.warn(e);
+          }
+        }
       );
       return () => unsubscribe();
     } else {
@@ -246,7 +273,7 @@ export default function Home() {
           );
           setCategories([...DEFAULT_CATEGORIES, ...uniqueCustom]);
         },
-        (error) => console.error('Error categories:', error)
+        (error) => console.warn('Error categories:', error)
       );
       return () => unsubscribe();
     }
@@ -267,7 +294,7 @@ export default function Home() {
             setBudgets(list);
           }
         },
-        (error) => console.error('Error budgets:', error)
+        (error) => console.warn('Error budgets:', error)
       );
       return () => unsubscribe();
     }
@@ -288,7 +315,7 @@ export default function Home() {
             setGoals(list);
           }
         },
-        (error) => console.error('Error savings_goals:', error)
+        (error) => console.warn('Error savings_goals:', error)
       );
       return () => unsubscribe();
     }
@@ -303,21 +330,62 @@ export default function Home() {
     }
   };
 
-  const handleLoadMockData = () => {
-    saveLocalTransactions(INITIAL_SAMPLE_TRANSACTIONS);
+  // Cargar datos de ejemplo en Firestore o Local
+  const handleLoadMockData = async () => {
+    if (isLiveFirebase && db) {
+      try {
+        for (const sample of INITIAL_SAMPLE_TRANSACTIONS) {
+          const { id, ...data } = sample;
+          await addDoc(collection(db, 'transactions'), {
+            ...sanitizeData(data),
+            createdAt: serverTimestamp(),
+          });
+        }
+        showToast('✅ Datos iniciales cargados en Firebase Firestore.');
+      } catch (err) {
+        console.error(err);
+        saveLocalTransactions(INITIAL_SAMPLE_TRANSACTIONS);
+        showToast('✅ Datos cargados localmente.');
+      }
+    } else {
+      saveLocalTransactions(INITIAL_SAMPLE_TRANSACTIONS);
+      showToast('✅ Datos de ejemplo cargados.');
+    }
   };
 
   // Crear o Editar Transacción
   const handleSaveTransaction = async (txData: Omit<Transaction, 'id'>) => {
+    const cleanData = sanitizeData(txData);
+
     if (isLiveFirebase && db) {
-      if (editingTx) {
-        const docRef = doc(db, 'transactions', editingTx.id);
-        await updateDoc(docRef, { ...txData });
-      } else {
-        await addDoc(collection(db, 'transactions'), {
-          ...txData,
-          createdAt: serverTimestamp(),
-        });
+      try {
+        if (editingTx) {
+          const docRef = doc(db, 'transactions', editingTx.id);
+          await updateDoc(docRef, cleanData);
+          showToast('✅ Movimiento actualizado correctamente.');
+        } else {
+          await addDoc(collection(db, 'transactions'), {
+            ...cleanData,
+            createdAt: serverTimestamp(),
+          });
+          showToast('✅ Movimiento registrado en tiempo real.');
+        }
+      } catch (err: any) {
+        console.error('Error al guardar en Firestore:', err);
+        // Fallback local
+        if (editingTx) {
+          const updated = transactions.map((t) =>
+            t.id === editingTx.id ? { ...txData, id: editingTx.id } : t
+          );
+          saveLocalTransactions(updated);
+        } else {
+          const newTx: Transaction = {
+            ...txData,
+            id: 'local-' + Date.now(),
+          };
+          saveLocalTransactions([newTx, ...transactions]);
+        }
+        showToast('💾 Guardado localmente (Revisa reglas de Firestore).');
       }
     } else {
       if (editingTx) {
@@ -332,6 +400,7 @@ export default function Home() {
         };
         saveLocalTransactions([newTx, ...transactions]);
       }
+      showToast('✅ Movimiento guardado.');
     }
     setEditingTx(null);
   };
@@ -339,20 +408,37 @@ export default function Home() {
   // Eliminar Transacción
   const handleDeleteTransaction = async (id: string) => {
     if (isLiveFirebase && db) {
-      await deleteDoc(doc(db, 'transactions', id));
+      try {
+        await deleteDoc(doc(db, 'transactions', id));
+        showToast('🗑️ Movimiento eliminado.');
+      } catch (err) {
+        console.error('Error al eliminar en Firestore:', err);
+        const filtered = transactions.filter((t) => t.id !== id);
+        saveLocalTransactions(filtered);
+        showToast('🗑️ Movimiento eliminado localmente.');
+      }
     } else {
       const filtered = transactions.filter((t) => t.id !== id);
       saveLocalTransactions(filtered);
+      showToast('🗑️ Movimiento eliminado.');
     }
   };
 
-  // Alternar Estado Pagado / Pendiente con un clic
+  // Alternar Estado Pagado / Pendiente
   const handleToggleStatus = async (transaction: Transaction) => {
     const nextStatus: TransactionStatus =
       transaction.status === 'pagado' ? 'pendiente' : 'pagado';
     if (isLiveFirebase && db) {
-      const docRef = doc(db, 'transactions', transaction.id);
-      await updateDoc(docRef, { status: nextStatus });
+      try {
+        const docRef = doc(db, 'transactions', transaction.id);
+        await updateDoc(docRef, { status: nextStatus });
+      } catch (err) {
+        console.error(err);
+        const updated = transactions.map((t) =>
+          t.id === transaction.id ? { ...t, status: nextStatus } : t
+        );
+        saveLocalTransactions(updated);
+      }
     } else {
       const updated = transactions.map((t) =>
         t.id === transaction.id ? { ...t, status: nextStatus } : t
@@ -364,8 +450,17 @@ export default function Home() {
   const handleToggleStatusById = async (id: string, currentStatus: 'pendiente' | 'pagado') => {
     const nextStatus: TransactionStatus = currentStatus === 'pagado' ? 'pendiente' : 'pagado';
     if (isLiveFirebase && db) {
-      const docRef = doc(db, 'transactions', id);
-      await updateDoc(docRef, { status: nextStatus });
+      try {
+        const docRef = doc(db, 'transactions', id);
+        await updateDoc(docRef, { status: nextStatus });
+        showToast(`Estado cambiado a ${nextStatus}`);
+      } catch (err) {
+        console.error(err);
+        const updated = transactions.map((t) =>
+          t.id === id ? { ...t, status: nextStatus } : t
+        );
+        saveLocalTransactions(updated);
+      }
     } else {
       const updated = transactions.map((t) =>
         t.id === id ? { ...t, status: nextStatus } : t
@@ -374,10 +469,16 @@ export default function Home() {
     }
   };
 
-  // Guardar Categoría
+  // Categoría
   const handleSaveCategory = async (catData: Omit<Category, 'id'>) => {
+    const clean = sanitizeData(catData);
     if (isLiveFirebase && db) {
-      await addDoc(collection(db, 'categories'), catData);
+      try {
+        await addDoc(collection(db, 'categories'), clean);
+        showToast('✅ Categoría creada.');
+      } catch (err) {
+        setCategories([...categories, { ...catData, id: 'cat-' + Date.now() }]);
+      }
     } else {
       setCategories([...categories, { ...catData, id: 'cat-' + Date.now() }]);
     }
@@ -385,11 +486,21 @@ export default function Home() {
 
   // Presupuestos
   const handleSaveBudget = async (budgetData: Omit<Budget, 'id'>, id?: string) => {
+    const clean = sanitizeData(budgetData);
     if (isLiveFirebase && db) {
-      if (id) {
-        await updateDoc(doc(db, 'budgets', id), { ...budgetData });
-      } else {
-        await addDoc(collection(db, 'budgets'), budgetData);
+      try {
+        if (id) {
+          await updateDoc(doc(db, 'budgets', id), clean);
+        } else {
+          await addDoc(collection(db, 'budgets'), clean);
+        }
+        showToast('🎯 Presupuesto actualizado.');
+      } catch (err) {
+        if (id) {
+          setBudgets(budgets.map((b) => (b.id === id ? { ...budgetData, id } : b)));
+        } else {
+          setBudgets([...budgets, { ...budgetData, id: 'b-' + Date.now() }]);
+        }
       }
     } else {
       if (id) {
@@ -397,12 +508,17 @@ export default function Home() {
       } else {
         setBudgets([...budgets, { ...budgetData, id: 'b-' + Date.now() }]);
       }
+      showToast('🎯 Presupuesto guardado.');
     }
   };
 
   const handleDeleteBudget = async (id: string) => {
     if (isLiveFirebase && db) {
-      await deleteDoc(doc(db, 'budgets', id));
+      try {
+        await deleteDoc(doc(db, 'budgets', id));
+      } catch {
+        setBudgets(budgets.filter((b) => b.id !== id));
+      }
     } else {
       setBudgets(budgets.filter((b) => b.id !== id));
     }
@@ -410,10 +526,17 @@ export default function Home() {
 
   // Metas de Ahorro
   const handleSaveGoal = async (goalData: Omit<SavingsGoal, 'id'>) => {
+    const clean = sanitizeData(goalData);
     if (isLiveFirebase && db) {
-      await addDoc(collection(db, 'savings_goals'), goalData);
+      try {
+        await addDoc(collection(db, 'savings_goals'), clean);
+        showToast('🐷 Chanchito creado con éxito.');
+      } catch {
+        setGoals([...goals, { ...goalData, id: 'goal-' + Date.now() }]);
+      }
     } else {
       setGoals([...goals, { ...goalData, id: 'goal-' + Date.now() }]);
+      showToast('🐷 Chanchito creado.');
     }
   };
 
@@ -423,23 +546,35 @@ export default function Home() {
     const newAmount = target.currentAmount + amountToAdd;
 
     if (isLiveFirebase && db) {
-      await updateDoc(doc(db, 'savings_goals', goalId), { currentAmount: newAmount });
+      try {
+        await updateDoc(doc(db, 'savings_goals', goalId), { currentAmount: newAmount });
+        showToast('💰 ¡Aporte registrado con éxito!');
+      } catch {
+        setGoals(
+          goals.map((g) => (g.id === goalId ? { ...g, currentAmount: newAmount } : g))
+        );
+      }
     } else {
       setGoals(
         goals.map((g) => (g.id === goalId ? { ...g, currentAmount: newAmount } : g))
       );
+      showToast('💰 ¡Aporte registrado!');
     }
   };
 
   const handleDeleteGoal = async (goalId: string) => {
     if (isLiveFirebase && db) {
-      await deleteDoc(doc(db, 'savings_goals', goalId));
+      try {
+        await deleteDoc(doc(db, 'savings_goals', goalId));
+      } catch {
+        setGoals(goals.filter((g) => g.id !== goalId));
+      }
     } else {
       setGoals(goals.filter((g) => g.id !== goalId));
     }
   };
 
-  // Saldar Deuda (Splitwise settlement)
+  // Saldar Deuda
   const handleSettleDebt = async (
     debtor: 'Tomas' | 'Miranda',
     creditor: 'Tomas' | 'Miranda',
@@ -461,16 +596,26 @@ export default function Home() {
     };
 
     if (isLiveFirebase && db) {
-      await addDoc(collection(db, 'transactions'), {
-        ...settlementTx,
-        createdAt: serverTimestamp(),
-      });
+      try {
+        await addDoc(collection(db, 'transactions'), {
+          ...sanitizeData(settlementTx),
+          createdAt: serverTimestamp(),
+        });
+        showToast('🤝 ¡Deuda saldada en tiempo real!');
+      } catch {
+        const newTx: Transaction = {
+          ...settlementTx,
+          id: 'settle-' + Date.now(),
+        };
+        saveLocalTransactions([newTx, ...transactions]);
+      }
     } else {
       const newTx: Transaction = {
         ...settlementTx,
         id: 'settle-' + Date.now(),
       };
       saveLocalTransactions([newTx, ...transactions]);
+      showToast('🤝 ¡Deuda saldada!');
     }
   };
 
@@ -532,6 +677,16 @@ export default function Home() {
 
   return (
     <div className="min-h-screen pb-24">
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div className="fixed top-20 right-5 z-50 animate-in fade-in slide-in-from-top-3 duration-200">
+          <div className="px-4 py-2.5 rounded-2xl bg-slate-900 border border-slate-700 text-white text-xs font-bold shadow-2xl flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+            <span>{toastMessage}</span>
+          </div>
+        </div>
+      )}
+
       {/* Barra de navegación superior */}
       <Navbar
         activeUser={activeUser}
@@ -540,12 +695,50 @@ export default function Home() {
       />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 space-y-6">
+        {/* Alerta de Error de Firestore si no tiene permisos */}
+        {firestoreError && (
+          <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-rose-400 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold text-sm text-white">Reglas de Seguridad de Firestore Pendientes</p>
+              <p className="mt-0.5">{firestoreError}</p>
+              <p className="mt-1 text-slate-300">
+                Entra a <strong>Firebase Console &gt; Firestore Database &gt; Reglas</strong>, pega <code className="bg-slate-900 px-1.5 py-0.5 rounded text-rose-200">allow read, write: if true;</code> y haz clic en <strong>Publicar</strong>.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Banner si Firebase no está vinculado */}
         {!isLiveFirebase && (
           <FirebaseConfigBanner
             onLoadMockData={handleLoadMockData}
             hasMockData={transactions.length > 0}
           />
+        )}
+
+        {/* Banner si la base de datos está vacía */}
+        {isLiveFirebase && transactions.length === 0 && (
+          <div className="p-5 rounded-2xl bg-indigo-500/10 border border-indigo-500/30 text-indigo-200 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-xl bg-indigo-500/20 text-indigo-300">
+                <Sparkles className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="font-bold text-sm text-white">Base de Datos Conectada y Lista</h4>
+                <p className="text-slate-300 text-xs">
+                  Tu base de datos en Firebase está vacía. Puedes comenzar a cargar tus gastos o iniciar con datos de ejemplo.
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={handleLoadMockData}
+              className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-md active:scale-95 transition-all self-start sm:self-auto whitespace-nowrap"
+            >
+              Cargar Gastos Iniciales
+            </button>
+          </div>
         )}
 
         {/* Selector de Pestañas Principales */}
