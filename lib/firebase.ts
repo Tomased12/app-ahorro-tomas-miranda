@@ -2,35 +2,37 @@ import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
 import { getFirestore, Firestore } from 'firebase/firestore';
 
 const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || 'AIzaSyBDxVZye32PhvMw2K9m9IBjTUHM8Nk4GEM',
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || 'gastos-mt.firebaseapp.com',
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || 'gastos-mt',
+  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || 'gastos-mt.firebasestorage.app',
+  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || '423123141288',
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID || '1:423123141288:web:799ce4a341d71a6ed1789d',
 };
 
 export function isFirebaseConfigured(): boolean {
-  return Boolean(
-    process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID &&
-    process.env.NEXT_PUBLIC_FIREBASE_API_KEY &&
-    process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID !== 'tu_proyecto_id' &&
-    process.env.NEXT_PUBLIC_FIREBASE_API_KEY !== 'tu_api_key_aqui'
+  const isConfigured = Boolean(
+    firebaseConfig.projectId &&
+    firebaseConfig.apiKey &&
+    firebaseConfig.projectId !== 'tu_proyecto_id' &&
+    firebaseConfig.apiKey !== 'tu_api_key_aqui'
   );
+  return isConfigured;
 }
 
 let app: FirebaseApp | null = null;
 let db: Firestore | null = null;
 
-if (typeof window !== 'undefined' || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID) {
-  try {
-    if (isFirebaseConfigured()) {
-      app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
-      db = getFirestore(app);
+try {
+  if (isFirebaseConfigured()) {
+    app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+    db = getFirestore(app);
+    if (typeof window !== 'undefined') {
+      console.log('🔥 Firebase inicializado con éxito en el cliente con proyecto:', firebaseConfig.projectId);
     }
-  } catch (error) {
-    console.warn('Advertencia al inicializar Firebase:', error);
   }
+} catch (error) {
+  console.error('❌ Error al inicializar Firebase:', error);
 }
 
-export { app, db };
+export { app, db, firebaseConfig };
