@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Target, Plus, AlertCircle, CheckCircle2, TrendingUp, Edit3, X, Sparkles } from 'lucide-react';
+import { Target, Plus, AlertCircle, CheckCircle2, Edit3, X, Trash2, RotateCcw } from 'lucide-react';
 import { Budget, BudgetStatus, Category } from '@/types';
 import { formatCurrency } from '@/lib/utils';
 
@@ -10,7 +10,8 @@ interface BudgetManagerProps {
   categories: Category[];
   budgets: Budget[];
   onSaveBudget: (budget: Omit<Budget, 'id'>, id?: string) => Promise<void>;
-  onDeleteBudget: (id: string) => Promise<void>;
+  onDeleteBudget: (identifier: string) => Promise<void>;
+  onResetDefaultBudgets?: () => void;
   monthLabel: string;
 }
 
@@ -20,6 +21,7 @@ export const BudgetManager: React.FC<BudgetManagerProps> = ({
   budgets,
   onSaveBudget,
   onDeleteBudget,
+  onResetDefaultBudgets,
   monthLabel,
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -32,7 +34,7 @@ export const BudgetManager: React.FC<BudgetManagerProps> = ({
     if (existingCategory) {
       setSelectedCategory(existingCategory);
       setLimitAmount(currentLimit ? currentLimit.toString() : '');
-      setEditingBudgetId(id || null);
+      setEditingBudgetId(id || existingCategory);
     } else {
       setSelectedCategory(categories[0]?.name || '');
       setLimitAmount('');
@@ -81,26 +83,40 @@ export const BudgetManager: React.FC<BudgetManagerProps> = ({
               <span className="text-xs font-normal text-slate-400">({monthLabel})</span>
             </h3>
             <p className="text-xs text-slate-400">
-              Controla topes de gasto mensual para no excederte del presupuesto
+              Define y elimina límites mensuales para cualquier categoría
             </p>
           </div>
         </div>
 
-        <button
-          onClick={() => handleOpenAddModal()}
-          className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs shadow-lg shadow-indigo-600/20 active:scale-95 transition-all"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Fijar Presupuesto</span>
-        </button>
+        <div className="flex items-center gap-2">
+          {budgetStatuses.length === 0 && onResetDefaultBudgets && (
+            <button
+              onClick={onResetDefaultBudgets}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 font-semibold text-xs active:scale-95 transition-all"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Restaurar Predeterminados</span>
+            </button>
+          )}
+
+          <button
+            onClick={() => handleOpenAddModal()}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs shadow-lg shadow-indigo-600/20 active:scale-95 transition-all"
+          >
+            <Plus className="w-4 h-4" />
+            <span>+ Fijar Presupuesto</span>
+          </button>
+        </div>
       </div>
 
       {/* Listado de Presupuestos */}
       {budgetStatuses.length === 0 ? (
-        <div className="p-8 text-center bg-slate-900/40 rounded-2xl border border-slate-800/60 text-slate-500 text-xs">
-          <Target className="w-8 h-8 mx-auto mb-2 opacity-30" />
-          <p className="font-semibold text-slate-300">No tienes presupuestos configurados</p>
-          <p className="mt-1">Define límites en Supermercado, Salidas o Servicios para alertarte cuando estés por alcanzarlos.</p>
+        <div className="p-10 text-center bg-slate-900/40 rounded-2xl border border-slate-800/60 text-slate-500 text-xs space-y-2">
+          <Target className="w-10 h-10 mx-auto text-slate-600" />
+          <p className="font-bold text-sm text-slate-300">No hay presupuestos activos</p>
+          <p className="max-w-md mx-auto text-slate-400">
+            Has eliminado todos los cuadros o aún no tienes presupuestos fijados. Haz clic en <strong>&quot;+ Fijar Presupuesto&quot;</strong> para crear el tuyo propio.
+          </p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -110,11 +126,12 @@ export const BudgetManager: React.FC<BudgetManagerProps> = ({
             const existingBudget = budgets.find(
               (b) => b.category.toLowerCase() === bs.category.toLowerCase()
             );
+            const deleteTarget = existingBudget?.id || bs.category;
 
             return (
               <div
                 key={bs.category}
-                className="p-4 rounded-2xl bg-slate-900/70 border border-slate-800 hover:border-slate-700 transition-all space-y-3"
+                className="p-4 rounded-2xl bg-slate-900/70 border border-slate-800 hover:border-slate-700 transition-all space-y-3 relative group"
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
@@ -138,14 +155,28 @@ export const BudgetManager: React.FC<BudgetManagerProps> = ({
                       {bs.percentage}% consumido
                     </span>
 
+                    {/* Botón Editar */}
                     <button
                       onClick={() =>
                         handleOpenAddModal(bs.category, bs.limit, existingBudget?.id)
                       }
-                      className="p-1 text-slate-500 hover:text-white rounded-lg hover:bg-slate-800"
-                      title="Editar límite"
+                      className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
+                      title="Editar monto"
                     >
                       <Edit3 className="w-3.5 h-3.5" />
+                    </button>
+
+                    {/* Botón Eliminar directo en la tarjeta */}
+                    <button
+                      onClick={() => {
+                        if (confirm(`¿Eliminar el presupuesto para "${bs.category}"?`)) {
+                          onDeleteBudget(deleteTarget);
+                        }
+                      }}
+                      className="p-1.5 text-slate-400 hover:text-rose-400 rounded-lg hover:bg-slate-800 transition-colors"
+                      title="Eliminar este presupuesto"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>
@@ -221,7 +252,7 @@ export const BudgetManager: React.FC<BudgetManagerProps> = ({
               </div>
               <div>
                 <h4 className="text-base font-bold text-white">
-                  {editingBudgetId ? 'Editar Límite' : 'Fijar Presupuesto'}
+                  {editingBudgetId ? 'Editar Presupuesto' : 'Fijar Presupuesto'}
                 </h4>
                 <p className="text-xs text-slate-400">Define el monto mensual máximo</p>
               </div>
@@ -277,9 +308,10 @@ export const BudgetManager: React.FC<BudgetManagerProps> = ({
                         setIsModalOpen(false);
                       }
                     }}
-                    className="text-xs text-rose-400 hover:underline"
+                    className="text-xs text-rose-400 hover:underline flex items-center gap-1"
                   >
-                    Eliminar
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Eliminar</span>
                   </button>
                 )}
 

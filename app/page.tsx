@@ -292,11 +292,27 @@ export default function Home() {
               list.push({ id: docSnap.id, ...docSnap.data() } as Budget);
             });
             setBudgets(list);
+          } else {
+            try {
+              const local = localStorage.getItem('local_budgets');
+              if (local !== null) {
+                setBudgets(JSON.parse(local));
+              }
+            } catch (e) {
+              console.warn(e);
+            }
           }
         },
         (error) => console.warn('Error budgets:', error)
       );
       return () => unsubscribe();
+    } else {
+      try {
+        const local = localStorage.getItem('local_budgets');
+        if (local !== null) setBudgets(JSON.parse(local));
+      } catch (e) {
+        console.warn(e);
+      }
     }
   }, [isLiveFirebase]);
 
@@ -487,41 +503,74 @@ export default function Home() {
   // Presupuestos
   const handleSaveBudget = async (budgetData: Omit<Budget, 'id'>, id?: string) => {
     const clean = sanitizeData(budgetData);
+    const existingIdx = budgets.findIndex(
+      (b) => (id && b.id === id) || b.category.toLowerCase() === budgetData.category.toLowerCase()
+    );
+
+    const budgetId = id || (existingIdx >= 0 ? budgets[existingIdx].id : 'b-' + Date.now());
+    let updatedList: Budget[];
+
+    if (existingIdx >= 0) {
+      updatedList = budgets.map((b, idx) =>
+        idx === existingIdx ? ({ ...clean, id: budgetId } as Budget) : b
+      );
+    } else {
+      updatedList = [...budgets, { ...clean, id: budgetId } as Budget];
+    }
+
+    setBudgets(updatedList);
+    try {
+      localStorage.setItem('local_budgets', JSON.stringify(updatedList));
+    } catch (e) {
+      console.warn(e);
+    }
+
     if (isLiveFirebase && db) {
       try {
-        if (id) {
+        if (id && !id.startsWith('b-')) {
           await updateDoc(doc(db, 'budgets', id), clean);
         } else {
-          await addDoc(collection(db, 'budgets'), clean);
+          const docRef = await addDoc(collection(db, 'budgets'), clean);
+          setBudgets((prev) =>
+            prev.map((b) => (b.id === budgetId ? { ...b, id: docRef.id } : b))
+          );
         }
-        showToast('🎯 Presupuesto actualizado.');
       } catch (err) {
-        if (id) {
-          setBudgets(budgets.map((b) => (b.id === id ? { ...budgetData, id } : b)));
-        } else {
-          setBudgets([...budgets, { ...budgetData, id: 'b-' + Date.now() }]);
-        }
+        console.warn('Firestore budget save:', err);
       }
-    } else {
-      if (id) {
-        setBudgets(budgets.map((b) => (b.id === id ? { ...budgetData, id } : b)));
-      } else {
-        setBudgets([...budgets, { ...budgetData, id: 'b-' + Date.now() }]);
-      }
-      showToast('🎯 Presupuesto guardado.');
     }
+    showToast('🎯 Presupuesto guardado con éxito.');
   };
 
-  const handleDeleteBudget = async (id: string) => {
+  const handleDeleteBudget = async (identifier: string) => {
+    const filtered = budgets.filter(
+      (b) => b.id !== identifier && b.category.toLowerCase() !== identifier.toLowerCase()
+    );
+    setBudgets(filtered);
+    try {
+      localStorage.setItem('local_budgets', JSON.stringify(filtered));
+    } catch (e) {
+      console.warn(e);
+    }
+
     if (isLiveFirebase && db) {
       try {
-        await deleteDoc(doc(db, 'budgets', id));
-      } catch {
-        setBudgets(budgets.filter((b) => b.id !== id));
+        await deleteDoc(doc(db, 'budgets', identifier));
+      } catch (err) {
+        console.warn('Firestore budget delete:', err);
       }
-    } else {
-      setBudgets(budgets.filter((b) => b.id !== id));
     }
+    showToast('🗑️ Presupuesto eliminado.');
+  };
+
+  const handleResetDefaultBudgets = () => {
+    setBudgets(DEFAULT_BUDGETS);
+    try {
+      localStorage.setItem('local_budgets', JSON.stringify(DEFAULT_BUDGETS));
+    } catch (e) {
+      console.warn(e);
+    }
+    showToast('🔄 Presupuestos predeterminados restaurados.');
   };
 
   // Metas de Ahorro
@@ -876,6 +925,7 @@ export default function Home() {
               budgets={budgets}
               onSaveBudget={handleSaveBudget}
               onDeleteBudget={handleDeleteBudget}
+              onResetDefaultBudgets={handleResetDefaultBudgets}
               monthLabel={monthFilter}
             />
           </div>
