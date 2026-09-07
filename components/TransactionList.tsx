@@ -9,8 +9,10 @@ import {
   Edit2,
   CheckCircle2,
   Clock,
-  Tag,
   Calendar,
+  CreditCard,
+  Banknote,
+  Smartphone,
 } from 'lucide-react';
 import { Transaction } from '@/types';
 import { formatCurrency, formatDate } from '@/lib/utils';
@@ -60,6 +62,19 @@ export const TransactionList: React.FC<TransactionListProps> = ({
     }
   };
 
+  const getPaymentMethodIcon = (pm?: string) => {
+    switch (pm) {
+      case 'credito':
+      case 'debito':
+        return <CreditCard className="w-3 h-3 text-indigo-400" />;
+      case 'efectivo':
+        return <Banknote className="w-3 h-3 text-emerald-400" />;
+      case 'transferencia':
+      default:
+        return <Smartphone className="w-3 h-3 text-cyan-400" />;
+    }
+  };
+
   return (
     <div className="space-y-2.5">
       {transactions.map((t) => {
@@ -99,7 +114,15 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                   <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-semibold bg-slate-800/80 text-slate-300 border border-slate-700/50">
                     {t.category}
                   </span>
+
+                  {/* Badge de Cuotas */}
+                  {t.installments && t.installments.total > 1 && (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold bg-indigo-500/10 text-indigo-300 border border-indigo-500/30">
+                      Cuota {t.installments.current}/{t.installments.total}
+                    </span>
+                  )}
                 </div>
+
                 <div className="flex items-center gap-2 text-xs text-slate-400 mt-1 flex-wrap">
                   <span>{formatDate(t.date)}</span>
                   <span>•</span>
@@ -116,6 +139,17 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                   <span className="text-slate-400 text-[11px] bg-slate-900 px-1.5 py-0.5 rounded border border-slate-800">
                     {getSplitLabel(t)}
                   </span>
+
+                  {/* Método de pago */}
+                  {t.paymentMethod && (
+                    <>
+                      <span>•</span>
+                      <span className="inline-flex items-center gap-1 text-[11px] text-slate-400">
+                        {getPaymentMethodIcon(t.paymentMethod)}
+                        <span className="capitalize">{t.paymentMethod}</span>
+                      </span>
+                    </>
+                  )}
                 </div>
               </div>
             </div>

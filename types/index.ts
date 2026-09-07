@@ -12,6 +12,13 @@ export type SplitType =
 
 export type TransactionStatus = 'pendiente' | 'pagado';
 
+export type PaymentMethod = 'efectivo' | 'transferencia' | 'debito' | 'credito';
+
+export interface Installments {
+  current: number; // Cuota actual (ej: 2)
+  total: number;   // Total de cuotas (ej: 6)
+}
+
 export interface CustomSplit {
   tomas: number; // Porcentaje (0-100) o monto
   miranda: number; // Porcentaje (0-100) o monto
@@ -27,10 +34,14 @@ export interface Transaction {
   paidBy: UserProfile;
   splitType: SplitType;
   customSplit?: CustomSplit;
-  date: string; // ISO string YYYY-MM-DD o timestamp string
+  paymentMethod?: PaymentMethod;
+  installments?: Installments;
+  dueDate?: string; // Fecha de vencimiento YYYY-MM-DD para servicios o impuestos
+  date: string; // ISO string YYYY-MM-DD
   status: TransactionStatus;
   notes?: string;
   isSettlement?: boolean; // Si es un movimiento para saldar deuda entre Tomas y Miranda
+  isRecurring?: boolean;  // Gasto fijo recurrente
   createdAt?: string | number;
 }
 
@@ -42,13 +53,55 @@ export interface Category {
   isDefault?: boolean;
 }
 
+export interface Budget {
+  id: string;
+  category: string;
+  monthlyLimit: number; // ARS
+  month?: string; // YYYY-MM (opcional, si es por mes específico)
+}
+
+export interface BudgetStatus {
+  category: string;
+  limit: number;
+  spent: number;
+  remaining: number;
+  percentage: number;
+  isOverBudget: boolean;
+  color?: string;
+}
+
+export interface SavingsGoal {
+  id: string;
+  title: string;
+  targetAmount: number; // ARS
+  currentAmount: number; // ARS
+  deadline?: string; // YYYY-MM-DD
+  color?: string;
+  icon?: string;
+  createdBy: UserProfile | 'Ambos';
+  notes?: string;
+  createdAt?: string | number;
+}
+
+export interface BillStatus {
+  id: string;
+  title: string;
+  amount: number;
+  dueDate: string;
+  category: string;
+  paidBy: UserProfile;
+  status: TransactionStatus;
+  daysRemaining: number;
+  urgency: 'overdue' | 'today' | 'soon' | 'future' | 'paid';
+}
+
 export interface BalanceSummary {
   tomasPaid: number;
   mirandaPaid: number;
-  tomasOwed: number; // lo que otros le deben a Tomas
-  mirandaOwed: number; // lo que otros le deben a Miranda
+  tomasOwed: number;
+  mirandaOwed: number;
   netDebtor: 'Tomas' | 'Miranda' | null;
-  netAmount: number; // Monto absoluto que netDebtor le debe al otro
+  netAmount: number;
   message: string;
 }
 
@@ -56,22 +109,22 @@ export interface SavingsPower {
   tomasIncome: number;
   tomasExpense: number;
   tomasSavings: number;
-  tomasRate: number; // % sobre ingresos
+  tomasRate: number;
 
   mirandaIncome: number;
   mirandaExpense: number;
   mirandaSavings: number;
-  mirandaRate: number; // % sobre ingresos
+  mirandaRate: number;
 
   householdIncome: number;
   householdExpense: number;
   householdSavings: number;
-  householdRate: number; // % sobre ingresos
+  householdRate: number;
 }
 
 export interface MonthlyMetric {
-  monthKey: string; // YYYY-MM
-  monthLabel: string; // Ene, Feb, etc.
+  monthKey: string;
+  monthLabel: string;
   ingresos: number;
   gastos: number;
   ahorro: number;

@@ -5,6 +5,10 @@ import {
   MonthlyMetric,
   CategoryDistribution,
   Category,
+  Budget,
+  BudgetStatus,
+  BillStatus,
+  SavingsGoal,
 } from '@/types';
 
 export const DEFAULT_CATEGORIES: Category[] = [
@@ -22,9 +26,51 @@ export const DEFAULT_CATEGORIES: Category[] = [
   { id: 'otros', name: 'Otros Gastos', icon: 'Layers', color: '#64748b', isDefault: true },
 ];
 
+export const DEFAULT_BUDGETS: Budget[] = [
+  { id: 'b-super', category: 'Supermercado', monthlyLimit: 250000 },
+  { id: 'b-salidas', category: 'Salidas y Restaurantes', monthlyLimit: 120000 },
+  { id: 'b-servicios', category: 'Luz', monthlyLimit: 50000 },
+  { id: 'b-flow', category: 'Flow / Internet', monthlyLimit: 40000 },
+  { id: 'b-transporte', category: 'Transporte / Nafta', monthlyLimit: 60000 },
+];
+
+export const DEFAULT_SAVINGS_GOALS: SavingsGoal[] = [
+  {
+    id: 'goal-1',
+    title: 'Vacaciones en Brasil 🏖️',
+    targetAmount: 1800000,
+    currentAmount: 750000,
+    deadline: '2026-12-15',
+    color: '#06b6d4',
+    icon: 'Palmtree',
+    createdBy: 'Ambos',
+    notes: 'Pasajes y alojamiento en Florianópolis',
+  },
+  {
+    id: 'goal-2',
+    title: 'Fondo de Emergencia 🛡️',
+    targetAmount: 3000000,
+    currentAmount: 1400000,
+    color: '#10b981',
+    icon: 'ShieldCheck',
+    createdBy: 'Ambos',
+    notes: 'Equivalente a 3 meses de gastos fijos',
+  },
+  {
+    id: 'goal-3',
+    title: 'Renovación Living / Sillón 🛋️',
+    targetAmount: 850000,
+    currentAmount: 320000,
+    deadline: '2026-10-30',
+    color: '#f59e0b',
+    icon: 'Armchair',
+    createdBy: 'Tomas',
+    notes: 'Sillón esquinero nuevo',
+  },
+];
+
 /**
  * Calcula el balance tipo Splitwise entre Tomas y Miranda.
- * Determina quién le debe a quién y el saldo neto.
  */
 export function calculateSplitwiseBalance(transactions: Transaction[]): BalanceSummary {
   let tomasPaid = 0;
@@ -33,13 +79,10 @@ export function calculateSplitwiseBalance(transactions: Transaction[]): BalanceS
   let tomasOwesMiranda = 0;
 
   for (const t of transactions) {
-    // Si es un movimiento de liquidación (Saldar Deuda)
     if (t.isSettlement) {
       if (t.paidBy === 'Tomas') {
-        // Tomas pagó a Miranda: reduce la deuda de Tomas con Miranda
         tomasOwesMiranda -= t.amount;
       } else {
-        // Miranda pagó a Tomas: reduce la deuda de Miranda con Tomas
         mirandaOwesTomas -= t.amount;
       }
       continue;
@@ -78,7 +121,6 @@ export function calculateSplitwiseBalance(transactions: Transaction[]): BalanceS
     }
   }
 
-  // Balance neto: positivo = Miranda debe a Tomas; negativo = Tomas debe a Miranda
   const net = mirandaOwesTomas - tomasOwesMiranda;
   const netAmount = Math.round(Math.abs(net) * 100) / 100;
 
@@ -106,11 +148,10 @@ export function calculateSplitwiseBalance(transactions: Transaction[]): BalanceS
 
 /**
  * Calcula el Poder de Ahorro mensual individual y conjunto del hogar.
- * Fórmula: Ingresos - Gastos correspondientes.
  */
 export function calculateSavingsPower(
   transactions: Transaction[],
-  monthFilter?: string // Formato 'YYYY-MM', si no se pasa se toma el mes actual
+  monthFilter?: string
 ): SavingsPower {
   const targetMonth = monthFilter || new Date().toISOString().slice(0, 7);
 
@@ -132,7 +173,6 @@ export function calculateSavingsPower(
         mirandaIncome += t.amount;
       }
     } else if (t.type === 'gasto') {
-      // Distribución real del gasto según corresponda a cada uno
       if (t.splitType === 'compartido_50_50') {
         tomasExpense += t.amount / 2;
         mirandaExpense += t.amount / 2;
@@ -149,7 +189,6 @@ export function calculateSavingsPower(
           mirandaExpense += (t.amount * (t.customSplit.miranda || 0)) / 100;
         }
       } else {
-        // Fallback por defecto según quién pagó
         if (t.paidBy === 'Tomas') tomasExpense += t.amount;
         else mirandaExpense += t.amount;
       }
@@ -191,7 +230,6 @@ export function calculateSavingsPower(
 export function getMonthlyMetrics(transactions: Transaction[], monthsCount = 6): MonthlyMetric[] {
   const monthsMap = new Map<string, { ingresos: number; gastos: number }>();
 
-  // Generar los últimos N meses en orden cronológico
   const now = new Date();
   for (let i = monthsCount - 1; i >= 0; i--) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
@@ -266,4 +304,103 @@ export function getCategoryDistribution(
   });
 
   return result.sort((a, b) => b.amount - a.amount);
+}
+
+/**
+ * Calcula el estado de los presupuestos por categoría (Gasto Real vs Límite)
+ */
+export function calculateBudgetStatuses(
+  transactions: Transaction[],
+  budgets: Budget[],
+  categories: Category[],
+  monthFilter?: string
+): BudgetStatus[] {
+  const targetMonth = monthFilter || new Date().toISOString().slice(0, 7);
+  const colorMap = new Map(categories.map((c) => [c.name, c.color]));
+
+  const monthExpenses = transactions.filter(
+    (t) => t.type === 'gasto' && !t.isSettlement && t.date.startsWith(targetMonth)
+  );
+
+  return budgets.map((b) => {
+    const spent = monthExpenses
+      .filter((t) => t.category.toLowerCase() === b.category.toLowerCase())
+      .reduce((acc, curr) => acc + curr.amount, 0);
+
+    const percentage = b.monthlyLimit > 0 ? Math.round((spent / b.monthlyLimit) * 100) : 0;
+    const remaining = Math.max(0, b.monthlyLimit - spent);
+    const isOverBudget = spent > b.monthlyLimit;
+
+    return {
+      category: b.category,
+      limit: b.monthlyLimit,
+      spent,
+      remaining,
+      percentage,
+      isOverBudget,
+      color: colorMap.get(b.category) || '#6366f1',
+    };
+  });
+}
+
+/**
+ * Obtiene y clasifica los vencimientos de servicios e impuestos del mes
+ */
+export function getUpcomingBills(
+  transactions: Transaction[],
+  monthFilter?: string
+): BillStatus[] {
+  const targetMonth = monthFilter || new Date().toISOString().slice(0, 7);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  // Consideramos servicios con fecha de vencimiento o transacciones de servicios
+  const billCategories = [
+    'luz', 'gas', 'abl / impuestos', 'flow / internet', 'tarjetas / deudas pendientes', 'alquiler'
+  ];
+
+  const bills = transactions.filter((t) => {
+    if (t.type !== 'gasto' || t.isSettlement) return false;
+    const isBillCategory = billCategories.some((bc) =>
+      t.category.toLowerCase().includes(bc)
+    );
+    const dateToCheck = t.dueDate || t.date;
+    return (isBillCategory || t.dueDate) && dateToCheck.startsWith(targetMonth);
+  });
+
+  return bills.map((b) => {
+    const dateStr = b.dueDate || b.date;
+    const billDate = new Date(dateStr + 'T00:00:00');
+    const diffTime = billDate.getTime() - today.getTime();
+    const daysRemaining = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+    let urgency: 'overdue' | 'today' | 'soon' | 'future' | 'paid' = 'future';
+
+    if (b.status === 'pagado') {
+      urgency = 'paid';
+    } else if (daysRemaining < 0) {
+      urgency = 'overdue';
+    } else if (daysRemaining === 0) {
+      urgency = 'today';
+    } else if (daysRemaining <= 3) {
+      urgency = 'soon';
+    } else {
+      urgency = 'future';
+    }
+
+    return {
+      id: b.id,
+      title: b.title,
+      amount: b.amount,
+      dueDate: dateStr,
+      category: b.category,
+      paidBy: b.paidBy,
+      status: b.status,
+      daysRemaining,
+      urgency,
+    };
+  }).sort((a, b) => {
+    if (a.status !== b.status) return a.status === 'pendiente' ? -1 : 1;
+    return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
+  });
 }

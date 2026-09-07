@@ -9,8 +9,10 @@ import {
   Calendar,
   DollarSign,
   Tag,
-  User,
-  PieChart,
+  CreditCard,
+  Banknote,
+  Smartphone,
+  Repeat,
   Clock,
   CheckCircle2,
 } from 'lucide-react';
@@ -21,6 +23,7 @@ import {
   UserProfile,
   TransactionStatus,
   Category,
+  PaymentMethod,
 } from '@/types';
 
 interface TransactionModalProps {
@@ -32,6 +35,13 @@ interface TransactionModalProps {
   defaultUser?: UserProfile;
   initialData?: Transaction | null;
 }
+
+const PAYMENT_METHODS: { id: PaymentMethod; label: string; icon: any }[] = [
+  { id: 'transferencia', label: 'Transferencia / MP', icon: Smartphone },
+  { id: 'credito', label: 'Tarjeta de Crédito', icon: CreditCard },
+  { id: 'debito', label: 'Tarjeta de Débito', icon: CreditCard },
+  { id: 'efectivo', label: 'Efectivo', icon: Banknote },
+];
 
 export const TransactionModal: React.FC<TransactionModalProps> = ({
   isOpen,
@@ -50,8 +60,13 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   const [splitType, setSplitType] = useState<SplitType>('compartido_50_50');
   const [customTomas, setCustomTomas] = useState(50);
   const [customMiranda, setCustomMiranda] = useState(50);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('transferencia');
+  const [totalInstallments, setTotalInstallments] = useState(1);
+  const [currentInstallment, setCurrentInstallment] = useState(1);
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [dueDate, setDueDate] = useState('');
   const [status, setStatus] = useState<TransactionStatus>('pagado');
+  const [isRecurring, setIsRecurring] = useState(false);
   const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -63,8 +78,18 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
       setCategory(initialData.category);
       setPaidBy(initialData.paidBy);
       setSplitType(initialData.splitType);
+      setPaymentMethod(initialData.paymentMethod || 'transferencia');
+      if (initialData.installments) {
+        setTotalInstallments(initialData.installments.total);
+        setCurrentInstallment(initialData.installments.current);
+      } else {
+        setTotalInstallments(1);
+        setCurrentInstallment(1);
+      }
       setDate(initialData.date);
+      setDueDate(initialData.dueDate || '');
       setStatus(initialData.status);
+      setIsRecurring(Boolean(initialData.isRecurring));
       setNotes(initialData.notes || '');
       if (initialData.customSplit) {
         setCustomTomas(initialData.customSplit.tomas);
@@ -77,8 +102,13 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
       setCategory(categories[0]?.name || 'Otros Gastos');
       setPaidBy(defaultUser);
       setSplitType('compartido_50_50');
+      setPaymentMethod('transferencia');
+      setTotalInstallments(1);
+      setCurrentInstallment(1);
       setDate(new Date().toISOString().slice(0, 10));
+      setDueDate('');
       setStatus('pagado');
+      setIsRecurring(false);
       setNotes('');
       setCustomTomas(50);
       setCustomMiranda(50);
@@ -112,8 +142,15 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
           splitType === 'personalizado'
             ? { tomas: customTomas, miranda: customMiranda, mode: 'percentage' }
             : undefined,
+        paymentMethod: type === 'gasto' ? paymentMethod : undefined,
+        installments:
+          type === 'gasto' && paymentMethod === 'credito' && totalInstallments > 1
+            ? { current: currentInstallment, total: totalInstallments }
+            : undefined,
         date,
+        dueDate: dueDate || undefined,
         status,
+        isRecurring,
         notes: notes.trim(),
         createdAt: initialData?.createdAt || Date.now(),
       });
@@ -233,6 +270,78 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
               ))}
             </select>
           </div>
+
+          {/* Método de Pago (Solo para Gastos) */}
+          {type === 'gasto' && (
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                Método de Pago
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                {PAYMENT_METHODS.map((pm) => {
+                  const Icon = pm.icon;
+                  const isSelected = paymentMethod === pm.id;
+                  return (
+                    <button
+                      key={pm.id}
+                      type="button"
+                      onClick={() => setPaymentMethod(pm.id)}
+                      className={`py-2 px-2.5 rounded-xl text-xs font-medium border flex items-center gap-2 transition-all ${
+                        isSelected
+                          ? 'bg-indigo-600/20 border-indigo-500 text-indigo-200 ring-1 ring-indigo-500'
+                          : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:bg-slate-800/40'
+                      }`}
+                    >
+                      <Icon className="w-3.5 h-3.5 text-indigo-400" />
+                      <span className="truncate">{pm.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Selector de Cuotas (Si es Tarjeta de Crédito) */}
+          {type === 'gasto' && paymentMethod === 'credito' && (
+            <div className="p-3 bg-indigo-950/20 border border-indigo-500/30 rounded-2xl space-y-2.5">
+              <label className="block text-xs font-bold text-indigo-300">
+                Plan de Cuotas
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[11px] text-slate-400 block mb-1">Total Cuotas</label>
+                  <select
+                    value={totalInstallments}
+                    onChange={(e) => setTotalInstallments(parseInt(e.target.value, 10))}
+                    className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-xs text-white"
+                  >
+                    <option value={1}>1 Pago</option>
+                    <option value={2}>2 Cuotas</option>
+                    <option value={3}>3 Cuotas</option>
+                    <option value={6}>6 Cuotas</option>
+                    <option value={9}>9 Cuotas</option>
+                    <option value={12}>12 Cuotas</option>
+                    <option value={18}>18 Cuotas</option>
+                    <option value={24}>24 Cuotas</option>
+                  </select>
+                </div>
+
+                {totalInstallments > 1 && (
+                  <div>
+                    <label className="text-[11px] text-slate-400 block mb-1">Cuota Actual</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={totalInstallments}
+                      value={currentInstallment}
+                      onChange={(e) => setCurrentInstallment(parseInt(e.target.value, 10))}
+                      className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-xs text-white"
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Pagado por (Tomas o Miranda) */}
           <div>
@@ -377,11 +486,11 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
             </div>
           )}
 
-          {/* Fecha & Estado (Pagado / Pendiente) */}
+          {/* Fecha, Vencimiento y Estado */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                Fecha
+                Fecha del Movimiento
               </label>
               <input
                 type="date"
@@ -394,35 +503,48 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
 
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                Estado
+                Fecha de Vencimiento (Opcional)
               </label>
-              <div className="grid grid-cols-2 gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => setStatus('pagado')}
-                  className={`py-2 rounded-xl text-xs font-semibold border flex items-center justify-center gap-1.5 transition-all ${
-                    status === 'pagado'
-                      ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300'
-                      : 'bg-slate-950 border-slate-800 text-slate-400'
-                  }`}
-                >
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>Pagado</span>
-                </button>
+              <input
+                type="date"
+                value={dueDate}
+                onChange={(e) => setDueDate(e.target.value)}
+                className="w-full px-3.5 py-2 bg-slate-950 border border-slate-800 rounded-xl text-sm text-slate-100 focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+          </div>
 
-                <button
-                  type="button"
-                  onClick={() => setStatus('pendiente')}
-                  className={`py-2 rounded-xl text-xs font-semibold border flex items-center justify-center gap-1.5 transition-all ${
-                    status === 'pendiente'
-                      ? 'bg-amber-500/20 border-amber-500 text-amber-300'
-                      : 'bg-slate-950 border-slate-800 text-slate-400'
-                  }`}
-                >
-                  <Clock className="w-3.5 h-3.5" />
-                  <span>Pendiente</span>
-                </button>
-              </div>
+          {/* Estado Pagado / Pendiente */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+              Estado
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setStatus('pagado')}
+                className={`py-2 rounded-xl text-xs font-semibold border flex items-center justify-center gap-1.5 transition-all ${
+                  status === 'pagado'
+                    ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300'
+                    : 'bg-slate-950 border-slate-800 text-slate-400'
+                }`}
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>Pagado</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setStatus('pendiente')}
+                className={`py-2 rounded-xl text-xs font-semibold border flex items-center justify-center gap-1.5 transition-all ${
+                  status === 'pendiente'
+                    ? 'bg-amber-500/20 border-amber-500 text-amber-300'
+                    : 'bg-slate-950 border-slate-800 text-slate-400'
+                }`}
+              >
+                <Clock className="w-3.5 h-3.5" />
+                <span>Pendiente / Por Vencer</span>
+              </button>
             </div>
           </div>
 

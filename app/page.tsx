@@ -20,13 +20,19 @@ import {
   UserProfile,
   TransactionType,
   TransactionStatus,
+  Budget,
+  SavingsGoal,
 } from '@/types';
 import {
   DEFAULT_CATEGORIES,
+  DEFAULT_BUDGETS,
+  DEFAULT_SAVINGS_GOALS,
   calculateSplitwiseBalance,
   calculateSavingsPower,
   getMonthlyMetrics,
   getCategoryDistribution,
+  calculateBudgetStatuses,
+  getUpcomingBills,
 } from '@/lib/finance';
 import { exportTransactionsToCSV } from '@/lib/utils';
 import { Navbar } from '@/components/Navbar';
@@ -37,8 +43,19 @@ import { TransactionFilters } from '@/components/TransactionFilters';
 import { TransactionList } from '@/components/TransactionList';
 import { TransactionModal } from '@/components/TransactionModal';
 import { CategoryModal } from '@/components/CategoryModal';
+import { BudgetManager } from '@/components/BudgetManager';
+import { BillsCalendar } from '@/components/BillsCalendar';
+import { SavingsGoalsSection } from '@/components/SavingsGoalsSection';
 import { FirebaseConfigBanner } from '@/components/FirebaseConfigBanner';
-import { Plus } from 'lucide-react';
+import {
+  Plus,
+  LayoutDashboard,
+  Target,
+  CalendarDays,
+  PiggyBank,
+} from 'lucide-react';
+
+type ActiveTab = 'resumen' | 'presupuestos' | 'vencimientos' | 'chanchitos';
 
 const INITIAL_SAMPLE_TRANSACTIONS: Transaction[] = [
   {
@@ -49,6 +66,7 @@ const INITIAL_SAMPLE_TRANSACTIONS: Transaction[] = [
     category: 'Sueldo / Ingresos',
     paidBy: 'Tomas',
     splitType: 'exclusivo_tomas',
+    paymentMethod: 'transferencia',
     date: new Date().toISOString().slice(0, 7) + '-05',
     status: 'pagado',
     notes: 'Haberes mensuales',
@@ -61,6 +79,7 @@ const INITIAL_SAMPLE_TRANSACTIONS: Transaction[] = [
     category: 'Sueldo / Ingresos',
     paidBy: 'Miranda',
     splitType: 'exclusivo_miranda',
+    paymentMethod: 'transferencia',
     date: new Date().toISOString().slice(0, 7) + '-05',
     status: 'pagado',
     notes: 'Honorarios profesionales',
@@ -73,7 +92,9 @@ const INITIAL_SAMPLE_TRANSACTIONS: Transaction[] = [
     category: 'Alquiler',
     paidBy: 'Tomas',
     splitType: 'compartido_50_50',
+    paymentMethod: 'transferencia',
     date: new Date().toISOString().slice(0, 7) + '-06',
+    dueDate: new Date().toISOString().slice(0, 7) + '-10',
     status: 'pagado',
     notes: 'Mes en curso',
   },
@@ -85,6 +106,7 @@ const INITIAL_SAMPLE_TRANSACTIONS: Transaction[] = [
     category: 'Supermercado',
     paidBy: 'Miranda',
     splitType: 'compartido_50_50',
+    paymentMethod: 'debito',
     date: new Date().toISOString().slice(0, 7) + '-07',
     status: 'pagado',
     notes: 'Compra mensual grande',
@@ -97,8 +119,10 @@ const INITIAL_SAMPLE_TRANSACTIONS: Transaction[] = [
     category: 'Luz',
     paidBy: 'Tomas',
     splitType: 'compartido_50_50',
+    paymentMethod: 'transferencia',
     date: new Date().toISOString().slice(0, 7) + '-10',
-    status: 'pagado',
+    dueDate: new Date().toISOString().slice(0, 7) + '-18',
+    status: 'pendiente',
   },
   {
     id: 'sample-6',
@@ -108,8 +132,10 @@ const INITIAL_SAMPLE_TRANSACTIONS: Transaction[] = [
     category: 'Gas',
     paidBy: 'Tomas',
     splitType: 'compartido_50_50',
+    paymentMethod: 'transferencia',
     date: new Date().toISOString().slice(0, 7) + '-12',
-    status: 'pagado',
+    dueDate: new Date().toISOString().slice(0, 7) + '-22',
+    status: 'pendiente',
   },
   {
     id: 'sample-7',
@@ -119,7 +145,9 @@ const INITIAL_SAMPLE_TRANSACTIONS: Transaction[] = [
     category: 'Flow / Internet',
     paidBy: 'Miranda',
     splitType: 'compartido_50_50',
+    paymentMethod: 'transferencia',
     date: new Date().toISOString().slice(0, 7) + '-14',
+    dueDate: new Date().toISOString().slice(0, 7) + '-15',
     status: 'pagado',
   },
   {
@@ -130,6 +158,8 @@ const INITIAL_SAMPLE_TRANSACTIONS: Transaction[] = [
     category: 'Salidas y Restaurantes',
     paidBy: 'Tomas',
     splitType: 'compartido_50_50',
+    paymentMethod: 'credito',
+    installments: { current: 1, total: 3 },
     date: new Date().toISOString().slice(0, 7) + '-15',
     status: 'pagado',
   },
@@ -141,15 +171,20 @@ const INITIAL_SAMPLE_TRANSACTIONS: Transaction[] = [
     category: 'Tarjetas / Deudas Pendientes',
     paidBy: 'Tomas',
     splitType: 'exclusivo_tomas',
+    paymentMethod: 'transferencia',
     date: new Date().toISOString().slice(0, 7) + '-20',
+    dueDate: new Date().toISOString().slice(0, 7) + '-20',
     status: 'pendiente',
     notes: 'Vence el 20',
   },
 ];
 
 export default function Home() {
+  const [activeTab, setActiveTab] = useState<ActiveTab>('resumen');
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [categories, setCategories] = useState<Category[]>(DEFAULT_CATEGORIES);
+  const [budgets, setBudgets] = useState<Budget[]>(DEFAULT_BUDGETS);
+  const [goals, setGoals] = useState<SavingsGoal[]>(DEFAULT_SAVINGS_GOALS);
   const [activeUser, setActiveUser] = useState<UserFilter>('Todos');
   const [monthFilter, setMonthFilter] = useState(() => new Date().toISOString().slice(0, 7));
   const [categoryFilter, setCategoryFilter] = useState('Todas');
@@ -162,7 +197,7 @@ export default function Home() {
 
   const isLiveFirebase = isFirebaseConfigured() && db !== null;
 
-  // 1. Sincronización en tiempo real con Firestore para Transacciones
+  // 1. Sincronización de Transacciones
   useEffect(() => {
     if (isLiveFirebase && db) {
       const q = query(collection(db, 'transactions'), orderBy('date', 'desc'));
@@ -171,33 +206,27 @@ export default function Home() {
         (snapshot) => {
           const list: Transaction[] = [];
           snapshot.forEach((docSnap) => {
-            const data = docSnap.data();
             list.push({
               id: docSnap.id,
-              ...data,
+              ...docSnap.data(),
             } as Transaction);
           });
           setTransactions(list);
         },
-        (error) => {
-          console.error('Error suscribiendo a Firestore transactions:', error);
-        }
+        (error) => console.error('Error transactions:', error)
       );
       return () => unsubscribe();
     } else {
-      // Modo Local / Demo: Cargar desde localStorage si existe
       try {
-        const localData = localStorage.getItem('local_transactions');
-        if (localData) {
-          setTransactions(JSON.parse(localData));
-        }
+        const local = localStorage.getItem('local_transactions');
+        if (local) setTransactions(JSON.parse(local));
       } catch (e) {
-        console.warn('Error reading local transactions:', e);
+        console.warn(e);
       }
     }
   }, [isLiveFirebase]);
 
-  // 2. Sincronización en tiempo real con Firestore para Categorías
+  // 2. Sincronización de Categorías
   useEffect(() => {
     if (isLiveFirebase && db) {
       const q = query(collection(db, 'categories'));
@@ -211,32 +240,60 @@ export default function Home() {
               ...docSnap.data(),
             } as Category);
           });
-
-          // Mezclar categorías por defecto y personalizadas sin duplicar
           const defaultNames = new Set(DEFAULT_CATEGORIES.map((c) => c.name.toLowerCase()));
           const uniqueCustom = customCats.filter(
             (c) => !defaultNames.has(c.name.toLowerCase())
           );
           setCategories([...DEFAULT_CATEGORIES, ...uniqueCustom]);
         },
-        (error) => {
-          console.error('Error suscribiendo a Firestore categories:', error);
-        }
+        (error) => console.error('Error categories:', error)
       );
       return () => unsubscribe();
-    } else {
-      try {
-        const localCats = localStorage.getItem('local_categories');
-        if (localCats) {
-          setCategories(JSON.parse(localCats));
-        }
-      } catch (e) {
-        console.warn('Error reading local categories:', e);
-      }
     }
   }, [isLiveFirebase]);
 
-  // Guardar en localStorage cuando se opera en modo local
+  // 3. Sincronización de Presupuestos
+  useEffect(() => {
+    if (isLiveFirebase && db) {
+      const q = query(collection(db, 'budgets'));
+      const unsubscribe = onSnapshot(
+        q,
+        (snapshot) => {
+          if (!snapshot.empty) {
+            const list: Budget[] = [];
+            snapshot.forEach((docSnap) => {
+              list.push({ id: docSnap.id, ...docSnap.data() } as Budget);
+            });
+            setBudgets(list);
+          }
+        },
+        (error) => console.error('Error budgets:', error)
+      );
+      return () => unsubscribe();
+    }
+  }, [isLiveFirebase]);
+
+  // 4. Sincronización de Metas de Ahorro (Chanchitos)
+  useEffect(() => {
+    if (isLiveFirebase && db) {
+      const q = query(collection(db, 'savings_goals'));
+      const unsubscribe = onSnapshot(
+        q,
+        (snapshot) => {
+          if (!snapshot.empty) {
+            const list: SavingsGoal[] = [];
+            snapshot.forEach((docSnap) => {
+              list.push({ id: docSnap.id, ...docSnap.data() } as SavingsGoal);
+            });
+            setGoals(list);
+          }
+        },
+        (error) => console.error('Error savings_goals:', error)
+      );
+      return () => unsubscribe();
+    }
+  }, [isLiveFirebase]);
+
   const saveLocalTransactions = (newTxList: Transaction[]) => {
     setTransactions(newTxList);
     try {
@@ -246,16 +303,6 @@ export default function Home() {
     }
   };
 
-  const saveLocalCategories = (newCats: Category[]) => {
-    setCategories(newCats);
-    try {
-      localStorage.setItem('local_categories', JSON.stringify(newCats));
-    } catch (e) {
-      console.warn(e);
-    }
-  };
-
-  // Cargar datos de ejemplo para demostración rápida
   const handleLoadMockData = () => {
     saveLocalTransactions(INITIAL_SAMPLE_TRANSACTIONS);
   };
@@ -273,7 +320,6 @@ export default function Home() {
         });
       }
     } else {
-      // Modo local
       if (editingTx) {
         const updated = transactions.map((t) =>
           t.id === editingTx.id ? { ...txData, id: editingTx.id } : t
@@ -315,16 +361,81 @@ export default function Home() {
     }
   };
 
-  // Crear nueva categoría personalizada
+  const handleToggleStatusById = async (id: string, currentStatus: 'pendiente' | 'pagado') => {
+    const nextStatus: TransactionStatus = currentStatus === 'pagado' ? 'pendiente' : 'pagado';
+    if (isLiveFirebase && db) {
+      const docRef = doc(db, 'transactions', id);
+      await updateDoc(docRef, { status: nextStatus });
+    } else {
+      const updated = transactions.map((t) =>
+        t.id === id ? { ...t, status: nextStatus } : t
+      );
+      saveLocalTransactions(updated);
+    }
+  };
+
+  // Guardar Categoría
   const handleSaveCategory = async (catData: Omit<Category, 'id'>) => {
     if (isLiveFirebase && db) {
       await addDoc(collection(db, 'categories'), catData);
     } else {
-      const newCat: Category = {
-        ...catData,
-        id: 'cat-' + Date.now(),
-      };
-      saveLocalCategories([...categories, newCat]);
+      setCategories([...categories, { ...catData, id: 'cat-' + Date.now() }]);
+    }
+  };
+
+  // Presupuestos
+  const handleSaveBudget = async (budgetData: Omit<Budget, 'id'>, id?: string) => {
+    if (isLiveFirebase && db) {
+      if (id) {
+        await updateDoc(doc(db, 'budgets', id), { ...budgetData });
+      } else {
+        await addDoc(collection(db, 'budgets'), budgetData);
+      }
+    } else {
+      if (id) {
+        setBudgets(budgets.map((b) => (b.id === id ? { ...budgetData, id } : b)));
+      } else {
+        setBudgets([...budgets, { ...budgetData, id: 'b-' + Date.now() }]);
+      }
+    }
+  };
+
+  const handleDeleteBudget = async (id: string) => {
+    if (isLiveFirebase && db) {
+      await deleteDoc(doc(db, 'budgets', id));
+    } else {
+      setBudgets(budgets.filter((b) => b.id !== id));
+    }
+  };
+
+  // Metas de Ahorro
+  const handleSaveGoal = async (goalData: Omit<SavingsGoal, 'id'>) => {
+    if (isLiveFirebase && db) {
+      await addDoc(collection(db, 'savings_goals'), goalData);
+    } else {
+      setGoals([...goals, { ...goalData, id: 'goal-' + Date.now() }]);
+    }
+  };
+
+  const handleContributeGoal = async (goalId: string, amountToAdd: number) => {
+    const target = goals.find((g) => g.id === goalId);
+    if (!target) return;
+    const newAmount = target.currentAmount + amountToAdd;
+
+    if (isLiveFirebase && db) {
+      await updateDoc(doc(db, 'savings_goals', goalId), { currentAmount: newAmount });
+    } else {
+      setGoals(
+        goals.map((g) => (g.id === goalId ? { ...g, currentAmount: newAmount } : g))
+      );
+    }
+  };
+
+  const handleDeleteGoal = async (goalId: string) => {
+    if (isLiveFirebase && db) {
+      await deleteDoc(doc(db, 'savings_goals', goalId));
+    } else {
+      setGoals(goals.filter((g) => g.id !== goalId));
     }
   };
 
@@ -341,6 +452,7 @@ export default function Home() {
       category: 'Tarjetas / Deudas Pendientes',
       paidBy: debtor,
       splitType: debtor === 'Tomas' ? 'exclusivo_miranda' : 'exclusivo_tomas',
+      paymentMethod: 'transferencia',
       date: new Date().toISOString().slice(0, 10),
       status: 'pagado',
       isSettlement: true,
@@ -365,27 +477,15 @@ export default function Home() {
   // Filtros aplicados a la lista de transacciones
   const filteredTransactions = useMemo(() => {
     return transactions.filter((t) => {
-      // Filtro de mes
-      if (monthFilter && (!t.date || !t.date.startsWith(monthFilter))) {
-        return false;
-      }
-      // Filtro de usuario
-      if (activeUser !== 'Todos' && t.paidBy !== activeUser) {
-        return false;
-      }
-      // Filtro de categoría
-      if (categoryFilter !== 'Todas' && t.category !== categoryFilter) {
-        return false;
-      }
-      // Filtro de estado
-      if (statusFilter !== 'todos' && t.status !== statusFilter) {
-        return false;
-      }
+      if (monthFilter && (!t.date || !t.date.startsWith(monthFilter))) return false;
+      if (activeUser !== 'Todos' && t.paidBy !== activeUser) return false;
+      if (categoryFilter !== 'Todas' && t.category !== categoryFilter) return false;
+      if (statusFilter !== 'todos' && t.status !== statusFilter) return false;
       return true;
     });
   }, [transactions, monthFilter, activeUser, categoryFilter, statusFilter]);
 
-  // Cálculos reactivos de Splitwise, Poder de Ahorro y Gráficos
+  // Cálculos reactivos
   const splitwiseBalance = useMemo(
     () => calculateSplitwiseBalance(transactions),
     [transactions]
@@ -404,6 +504,16 @@ export default function Home() {
   const categoryDistribution = useMemo(
     () => getCategoryDistribution(transactions, categories, monthFilter),
     [transactions, categories, monthFilter]
+  );
+
+  const budgetStatuses = useMemo(
+    () => calculateBudgetStatuses(transactions, budgets, categories, monthFilter),
+    [transactions, budgets, categories, monthFilter]
+  );
+
+  const upcomingBills = useMemo(
+    () => getUpcomingBills(transactions, monthFilter),
+    [transactions, monthFilter]
   );
 
   const handleExportCSV = () => {
@@ -430,7 +540,7 @@ export default function Home() {
       />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 space-y-6">
-        {/* Banner de configuración si Firebase no está vinculado */}
+        {/* Banner si Firebase no está vinculado */}
         {!isLiveFirebase && (
           <FirebaseConfigBanner
             onLoadMockData={handleLoadMockData}
@@ -438,72 +548,168 @@ export default function Home() {
           />
         )}
 
-        {/* 1. Módulo Splitwise (Balance Compartido) */}
-        <BalanceCard
-          balance={splitwiseBalance}
-          onSettleDebt={handleSettleDebt}
-        />
+        {/* Selector de Pestañas Principales */}
+        <div className="flex items-center gap-1.5 p-1.5 bg-slate-900/90 rounded-2xl border border-slate-800 shadow-inner overflow-x-auto">
+          <button
+            onClick={() => setActiveTab('resumen')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
+              activeTab === 'resumen'
+                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+            }`}
+          >
+            <LayoutDashboard className="w-4 h-4" />
+            <span>Resumen & Splitwise</span>
+          </button>
 
-        {/* 2. Módulo de Poder de Ahorro */}
-        <SavingsPowerCard
-          savings={savingsPower}
-          activeUser={activeUser}
-          monthLabel={monthFilter}
-        />
+          <button
+            onClick={() => setActiveTab('presupuestos')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
+              activeTab === 'presupuestos'
+                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+            }`}
+          >
+            <Target className="w-4 h-4" />
+            <span>Presupuestos</span>
+          </button>
 
-        {/* 3. Métricas y Gráficos Visuales */}
-        <MetricsCharts
-          monthlyMetrics={monthlyMetrics}
-          categoryDistribution={categoryDistribution}
-        />
+          <button
+            onClick={() => setActiveTab('vencimientos')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
+              activeTab === 'vencimientos'
+                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+            }`}
+          >
+            <CalendarDays className="w-4 h-4" />
+            <span>Vencimientos</span>
+            {upcomingBills.some((b) => b.urgency === 'overdue' || b.urgency === 'today') && (
+              <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+            )}
+          </button>
 
-        {/* 4. Barra de Filtros y Búsqueda */}
-        <TransactionFilters
-          monthFilter={monthFilter}
-          onMonthChange={setMonthFilter}
-          userFilter={activeUser}
-          onUserChange={setActiveUser}
-          categoryFilter={categoryFilter}
-          onCategoryChange={setCategoryFilter}
-          statusFilter={statusFilter}
-          onStatusChange={setStatusFilter}
-          categories={categories}
-          onExportCSV={handleExportCSV}
-          onResetFilters={handleResetFilters}
-        />
-
-        {/* 5. Historial de Transacciones */}
-        <div className="space-y-3">
-          <div className="flex items-center justify-between px-1">
-            <h3 className="text-base font-bold text-white flex items-center gap-2">
-              Historial de Movimientos
-              <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
-                {filteredTransactions.length}
-              </span>
-            </h3>
-
-            <button
-              onClick={() => {
-                setEditingTx(null);
-                setIsTxModalOpen(true);
-              }}
-              className="hidden sm:inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-lg shadow-indigo-600/20 active:scale-95 transition-all"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Nuevo Movimiento</span>
-            </button>
-          </div>
-
-          <TransactionList
-            transactions={filteredTransactions}
-            onEdit={(tx) => {
-              setEditingTx(tx);
-              setIsTxModalOpen(true);
-            }}
-            onDelete={handleDeleteTransaction}
-            onToggleStatus={handleToggleStatus}
-          />
+          <button
+            onClick={() => setActiveTab('chanchitos')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
+              activeTab === 'chanchitos'
+                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+            }`}
+          >
+            <PiggyBank className="w-4 h-4" />
+            <span>Chanchitos (Metas)</span>
+          </button>
         </div>
+
+        {/* VISTA 1: RESUMEN GENERAL (Splitwise, Poder de Ahorro, Métricas, Historial) */}
+        {activeTab === 'resumen' && (
+          <div className="space-y-6 animate-in fade-in duration-200">
+            {/* 1. Módulo Splitwise */}
+            <BalanceCard
+              balance={splitwiseBalance}
+              onSettleDebt={handleSettleDebt}
+            />
+
+            {/* 2. Módulo de Poder de Ahorro */}
+            <SavingsPowerCard
+              savings={savingsPower}
+              activeUser={activeUser}
+              monthLabel={monthFilter}
+            />
+
+            {/* 3. Métricas y Gráficos Visuales */}
+            <MetricsCharts
+              monthlyMetrics={monthlyMetrics}
+              categoryDistribution={categoryDistribution}
+            />
+
+            {/* 4. Barra de Filtros y Búsqueda */}
+            <TransactionFilters
+              monthFilter={monthFilter}
+              onMonthChange={setMonthFilter}
+              userFilter={activeUser}
+              onUserChange={setActiveUser}
+              categoryFilter={categoryFilter}
+              onCategoryChange={setCategoryFilter}
+              statusFilter={statusFilter}
+              onStatusChange={setStatusFilter}
+              categories={categories}
+              onExportCSV={handleExportCSV}
+              onResetFilters={handleResetFilters}
+            />
+
+            {/* 5. Historial de Transacciones */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between px-1">
+                <h3 className="text-base font-bold text-white flex items-center gap-2">
+                  Historial de Movimientos
+                  <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
+                    {filteredTransactions.length}
+                  </span>
+                </h3>
+
+                <button
+                  onClick={() => {
+                    setEditingTx(null);
+                    setIsTxModalOpen(true);
+                  }}
+                  className="hidden sm:inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-lg shadow-indigo-600/20 active:scale-95 transition-all"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Nuevo Movimiento</span>
+                </button>
+              </div>
+
+              <TransactionList
+                transactions={filteredTransactions}
+                onEdit={(tx) => {
+                  setEditingTx(tx);
+                  setIsTxModalOpen(true);
+                }}
+                onDelete={handleDeleteTransaction}
+                onToggleStatus={handleToggleStatus}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* VISTA 2: PRESUPUESTOS POR CATEGORÍA */}
+        {activeTab === 'presupuestos' && (
+          <div className="space-y-6 animate-in fade-in duration-200">
+            <BudgetManager
+              budgetStatuses={budgetStatuses}
+              categories={categories}
+              budgets={budgets}
+              onSaveBudget={handleSaveBudget}
+              onDeleteBudget={handleDeleteBudget}
+              monthLabel={monthFilter}
+            />
+          </div>
+        )}
+
+        {/* VISTA 3: CALENDARIO DE VENCIMIENTOS */}
+        {activeTab === 'vencimientos' && (
+          <div className="space-y-6 animate-in fade-in duration-200">
+            <BillsCalendar
+              bills={upcomingBills}
+              onToggleStatus={handleToggleStatusById}
+              monthLabel={monthFilter}
+            />
+          </div>
+        )}
+
+        {/* VISTA 4: METAS DE AHORRO ("CHANCHITOS") */}
+        {activeTab === 'chanchitos' && (
+          <div className="space-y-6 animate-in fade-in duration-200">
+            <SavingsGoalsSection
+              goals={goals}
+              onSaveGoal={handleSaveGoal}
+              onContributeGoal={handleContributeGoal}
+              onDeleteGoal={handleDeleteGoal}
+            />
+          </div>
+        )}
       </main>
 
       {/* Botón Flotante Rápido (+) Mobile-First */}
